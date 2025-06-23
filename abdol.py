@@ -39,6 +39,18 @@ if POINTS_FILE.exists():
 else:
     print("ℹ️ No points file found, starting fresh")
 
+# === Check if user is admin ===
+async def is_admin(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    if not ADMINS_FILE.exists():
+        return False
+        
+    try:
+        with open(ADMINS_FILE, 'r') as f:
+            admins = json.load(f)
+        return user_id in admins
+    except:
+        return False
+
 # === /start command ===
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -47,7 +59,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "1. Add me to a group\n"
         "2. Admins can reply to messages with 'ok' or 'tam' to award points\n"
         "3. I'll post weekly leaderboards every Saturday\n\n"
-        "Use /dash to see the current leaderboard!"
+        "Commands:\n"
+        "/dash - Show current leaderboard\n"
+        "/reset - Reset points (admins only)"
     )
 
 # === /dash command - show current leaderboard ===
@@ -80,6 +94,24 @@ async def dash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 Current Leaderboard 📊\n\n" + "\n".join(leaderboard)
     )
 
+# === /reset command - reset all points (admin only) ===
+async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    
+    # Check if user is admin
+    if not await is_admin(context, user_id):
+        await update.message.reply_text("⛔ You need to be an admin to reset points!")
+        return
+        
+    # Reset points
+    global points
+    points.clear()
+    with open(POINTS_FILE, 'w') as f:
+        json.dump(points, f)
+    
+    await update.message.reply_text("✅ Leaderboard has been reset! All points cleared.")
+    print(f"♻️ Points reset by user {user_id}")
+
 # === Save group ID and admin list ===
 async def save_group_and_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -104,7 +136,9 @@ async def save_group_and_admins(update: Update, context: ContextTypes.DEFAULT_TY
         await context.bot.send_message(
             chat.id,
             "✅ Bot initialized and admins saved.\n\n"
-            "Use /dash to see the current leaderboard!"
+            "Commands:\n"
+            "/dash - Show current leaderboard\n"
+            "/reset - Reset points (admins only)"
         )
 
 # === Handle admin replies ===
@@ -116,14 +150,8 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
     # Check admin status
-    if os.path.exists(ADMINS_FILE):
-        try:
-            with open(ADMINS_FILE, 'r') as f:
-                admins = json.load(f)
-            if user_id not in admins:
-                return
-        except (json.JSONDecodeError, FileNotFoundError):
-            return
+    if not await is_admin(context, user_id):
+        return
 
     # Check keyword
     text = update.message.text.lower().strip()
@@ -144,6 +172,7 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_leaderboard(context: CallbackContext):
     job_ctx = context.job.context
     if not points:
+        await context.bot.send_message(job_ctx, "📭 No points awarded this week!")
         return
 
     sorted_points = sorted(points.items(), key=lambda x: x[1], reverse=True)
@@ -174,6 +203,7 @@ async def send_leaderboard(context: CallbackContext):
     points.clear()
     with open(POINTS_FILE, 'w') as f:
         json.dump(points, f)
+    print("♻️ Weekly points reset after leaderboard")
 
 # === Schedule leaderboard ===
 def schedule_leaderboard(application: Application, chat_id: int):
@@ -212,6 +242,7 @@ def main():
     # Add handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("dash", dash_command))
+    application.add_handler(CommandHandler("reset", reset_command))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, save_group_and_admins))
     application.add_handler(MessageHandler(filters.TEXT & filters.REPLY, handle_reply))
     
