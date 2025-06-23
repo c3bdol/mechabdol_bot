@@ -19,7 +19,7 @@ DATA_DIR = os.getenv("DATA_DIR", ".")
 POINTS_FILE = Path(DATA_DIR) / 'points.json'
 GROUP_CHAT_ID_FILE = Path(DATA_DIR) / 'group_id.txt'
 ADMINS_FILE = Path(DATA_DIR) / 'admins.json'
-KEYWORDS = ['ok', 'tam']
+KEYWORDS = ['ok', 'tam', 'تم', 'ضن']
 points = {}
 
 print(f"📁 Using persistent storage at: {DATA_DIR}")
