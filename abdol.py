@@ -4,7 +4,8 @@ from telegram.ext import (
     MessageHandler,
     filters,
     ContextTypes,
-    CallbackContext
+    CallbackContext,
+    CommandHandler
 )
 import datetime
 import json
@@ -38,6 +39,47 @@ if POINTS_FILE.exists():
 else:
     print("ℹ️ No points file found, starting fresh")
 
+# === /start command ===
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Hello! I'm the Points Bot!\n\n"
+        "Here's how I work:\n"
+        "1. Add me to a group\n"
+        "2. Admins can reply to messages with 'ok' or 'tam' to award points\n"
+        "3. I'll post weekly leaderboards every Saturday\n\n"
+        "Use /dash to see the current leaderboard!"
+    )
+
+# === /dash command - show current leaderboard ===
+async def dash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not points:
+        await update.message.reply_text("📊 No points yet! Start awarding points by replying to messages with 'ok' or 'tam'.")
+        return
+
+    # Create leaderboard
+    sorted_points = sorted(points.items(), key=lambda x: x[1], reverse=True)
+    leaderboard = []
+    
+    for idx, (uid, pts) in enumerate(sorted_points):
+        try:
+            user = await context.bot.get_chat_member(update.effective_chat.id, int(uid))
+            name = user.user.full_name
+        except:
+            name = f"User {uid}"
+        leaderboard.append(f"{idx+1}. {name} - {pts} pts")
+    
+    # Add emoji indicators for top 3
+    if len(leaderboard) > 0:
+        leaderboard[0] = "🥇 " + leaderboard[0]
+    if len(leaderboard) > 1:
+        leaderboard[1] = "🥈 " + leaderboard[1]
+    if len(leaderboard) > 2:
+        leaderboard[2] = "🥉 " + leaderboard[2]
+    
+    await update.message.reply_text(
+        "📊 Current Leaderboard 📊\n\n" + "\n".join(leaderboard)
+    )
+
 # === Save group ID and admin list ===
 async def save_group_and_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -59,10 +101,101 @@ async def save_group_and_admins(update: Update, context: ContextTypes.DEFAULT_TY
             schedule_leaderboard(context.application, group_id)
         
         print(f"✅ Saved group ID {group_id} and {len(admin_ids)} admins")
-        await context.bot.send_message(chat.id, "✅ Bot initialized and admins saved.")
+        await context.bot.send_message(
+            chat.id,
+            "✅ Bot initialized and admins saved.\n\n"
+            "Use /dash to see the current leaderboard!"
+        )
 
-# ... (rest of the code remains same as previous fix) ...
+# === Handle admin replies ===
+async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.reply_to_message:
+        return
 
+    user_id = update.message.from_user.id
+    chat_id = update.effective_chat.id
+
+    # Check admin status
+    if os.path.exists(ADMINS_FILE):
+        try:
+            with open(ADMINS_FILE, 'r') as f:
+                admins = json.load(f)
+            if user_id not in admins:
+                return
+        except (json.JSONDecodeError, FileNotFoundError):
+            return
+
+    # Check keyword
+    text = update.message.text.lower().strip()
+    if text in KEYWORDS:
+        replied_user_id = str(update.message.reply_to_message.from_user.id)
+        points[replied_user_id] = points.get(replied_user_id, 0) + 1
+        
+        with open(POINTS_FILE, 'w') as f:
+            json.dump(points, f)
+        
+        # Get user's current points
+        current_points = points.get(replied_user_id, 0)
+        await update.message.reply_text(
+            f"✅ +1 point! Total: {current_points} 🔥"
+        )
+
+# === Leaderboard function ===
+async def send_leaderboard(context: CallbackContext):
+    job_ctx = context.job.context
+    if not points:
+        return
+
+    sorted_points = sorted(points.items(), key=lambda x: x[1], reverse=True)
+    leaderboard = []
+    
+    for idx, (uid, pts) in enumerate(sorted_points):
+        try:
+            user = await context.bot.get_chat_member(job_ctx, int(uid))
+            name = user.user.full_name
+        except:
+            name = f"User {uid}"
+        leaderboard.append(f"{idx+1}. {name} - {pts} pts")
+    
+    # Add emoji indicators for top 3
+    if len(leaderboard) > 0:
+        leaderboard[0] = "🥇 " + leaderboard[0]
+    if len(leaderboard) > 1:
+        leaderboard[1] = "🥈 " + leaderboard[1]
+    if len(leaderboard) > 2:
+        leaderboard[2] = "🥉 " + leaderboard[2]
+    
+    await context.bot.send_message(
+        chat_id=job_ctx,
+        text=f"🏆 Weekly Leaderboard 🏆\n\n" + "\n".join(leaderboard)
+    )
+    
+    # Reset points
+    points.clear()
+    with open(POINTS_FILE, 'w') as f:
+        json.dump(points, f)
+
+# === Schedule leaderboard ===
+def schedule_leaderboard(application: Application, chat_id: int):
+    if not application.job_queue:
+        return
+    
+    # Remove existing jobs
+    current_jobs = application.job_queue.get_jobs_by_name("weekly_leaderboard")
+    for job in current_jobs:
+        job.schedule_removal()
+    
+    # Schedule new job (Saturday 6 AM UTC)
+    application.job_queue.run_daily(
+        send_leaderboard,
+        time=datetime.time(hour=6, minute=0, tzinfo=pytz.UTC),
+        days=(5,),  # Saturday (0=Monday, 6=Sunday)
+        context=chat_id,
+        name="weekly_leaderboard"
+    )
+    print(f"⏰ Scheduled weekly leaderboard for chat {chat_id} on Saturdays at 06:00 UTC")
+
+# === Load group ID ===
 def load_group_id():
     if GROUP_CHAT_ID_FILE.exists():
         try:
@@ -77,6 +210,8 @@ def main():
     application = Application.builder().token(TOKEN).build()
     
     # Add handlers
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("dash", dash_command))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, save_group_and_admins))
     application.add_handler(MessageHandler(filters.TEXT & filters.REPLY, handle_reply))
     
