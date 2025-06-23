@@ -17,7 +17,7 @@
   },
   "variables": {
     "TELEGRAM_TOKEN": {
-      "description": "8178675165:AAGgw_tEt5fHFsdSpWjYgn6SwawJ4LlL-Lc",
+      "description": "Your Telegram bot token",
       "required": true
     },
     "DATA_DIR": {
