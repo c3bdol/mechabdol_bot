@@ -128,8 +128,11 @@ async def start_bot():
 # === Safe event loop fix for hosting environments ===
 if __name__ == '__main__':
     import asyncio
+    import sys
+
     try:
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(start_bot())
+        asyncio.run(start_bot())
     except RuntimeError as e:
-        print(f"⚠️ Loop error: {e}")
+        print(f"⚠️ Bot stopped: {e}")
+        sys.exit(1)
+
