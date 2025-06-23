@@ -7,7 +7,7 @@ import json
 import os
 
 # === Config ===
-TOKEN = os.getenv("TOKEN")  # Get from Railway or environment
+TOKEN = '8178675165:AAGgw_tEt5fHFsdSpWjYgn6SwawJ4LlL-Lc'  # <--- put your real token here
 POINTS_FILE = 'points.json'
 GROUP_CHAT_ID_FILE = 'group_id.txt'
 ADMINS_FILE = 'admins.json'
