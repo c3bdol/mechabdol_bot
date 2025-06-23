@@ -14,7 +14,7 @@ import os
 import pytz  # For timezone handling
 
 # === Config ===
-TOKEN = 'YOUR_BOT_TOKEN'  # Replace with your actual token
+TOKEN = '8178675165:AAGgw_tEt5fHFsdSpWjYgn6SwawJ4LlL-Lc'  # Replace with your actual token
 POINTS_FILE = 'points.json'
 GROUP_CHAT_ID_FILE = 'group_id.txt'
 ADMINS_FILE = 'admins.json'
