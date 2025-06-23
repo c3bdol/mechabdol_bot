@@ -148,26 +148,15 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.message.from_user.id
     chat_id = update.effective_chat.id
-    replied_user = update.message.reply_to_message.from_user
-
-    # Prevent self-awarding
-    if user_id == replied_user.id:
-        await update.message.reply_text("🛑 You can't award points to yourself!")
-        return
 
     # Check admin status
     if not await is_admin(context, user_id):
         return
 
-    # Check if replied user is a bot
-    if replied_user.is_bot:
-        await update.message.reply_text("🤖 Bots can't earn points!")
-        return
-
     # Check keyword
     text = update.message.text.lower().strip()
     if text in KEYWORDS:
-        replied_user_id = str(replied_user.id)
+        replied_user_id = str(update.message.reply_to_message.from_user.id)
         points[replied_user_id] = points.get(replied_user_id, 0) + 1
         
         with open(POINTS_FILE, 'w') as f:
@@ -175,16 +164,8 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Get user's current points
         current_points = points.get(replied_user_id, 0)
-        
-        # Get user's name for response
-        try:
-            user = await context.bot.get_chat_member(chat_id, int(replied_user_id))
-            name = user.user.full_name
-        except:
-            name = "this user"
-            
         await update.message.reply_text(
-            f"✅ +1 point to {name}! Total: {current_points} 🔥"
+            f"✅ +1 point! Total: {current_points} 🔥"
         )
 
 # === Leaderboard function ===
