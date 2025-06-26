@@ -89,30 +89,30 @@ def is_private_chat_allowed(command: str) -> bool:
 # === /start command ===
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 مرحباً! أنا بوت النقاط!\n\n"
-        "طريقة عملي:\n"
-        "1. أضفني إلى مجموعة\n"
-        "2. المشرفون ومالك المجموعة يمكنهم الرد على الرسائل بكلمات مفتاحية لإضافة/خصم النقاط\n"
-        "3. سأنشر جدول المتصدرين الأسبوعي كل يوم سبت\n\n"
-        "الأوامر (المجموعات فقط):\n"
-        "/dash - عرض جدول المتصدرين الحالي\n"
-        "/reset - إعادة تعيين النقاط (المشرفون/المالك فقط)\n\n"
-        f"إضافة نقاط: {', '.join(KEYWORDS)}\n"
-        f"خصم نقاط: {', '.join(SUBTRACT_KEYWORDS)}"
+        "👋 أهلاً وسهلاً! أنا بوت النقط!\n\n"
+        "إزاي أشتغل:\n"
+        "1. ضيفني للجروب\n"
+        "2. الأدمنز وصاحب الجروب يقدروا يردوا على الرسايل بكلمات معينة علشان يدوا نقط أو يشيلوها\n"
+        "3. هنشر قايمة المتصدرين كل يوم سبت\n\n"
+        "الأوامر (الجروبات بس):\n"
+        "/dash - عرض قايمة المتصدرين دلوقتي\n"
+        "/reset - مسح النقط كلها (الأدمنز/صاحب الجروب بس)\n\n"
+        f"زيادة نقط: {', '.join(KEYWORDS)}\n"
+        f"نقص نقط: {', '.join(SUBTRACT_KEYWORDS)}"
     )
 
 # === /dash command - show current leaderboard ===
 async def dash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if command is in group
     if update.effective_chat.type == 'private':
-        await update.message.reply_text("⛔ هذا الأمر يمكن استخدامه في المجموعات فقط!")
+        await update.message.reply_text("⛔ الأمر ده بيشتغل في الجروبات بس!")
         return
     
     group_id = update.effective_chat.id
     points = load_group_points(group_id)
     
     if not points:
-        await update.message.reply_text("📊 لا توجد نقاط بعد! ابدأ بمنح النقاط من خلال الرد على الرسائل بالكلمات المفتاحية.")
+        await update.message.reply_text("📊 مفيش نقط لسه! ابدأ إدي نقط بالرد على الرسايل بالكلمات المحددة.")
         return
 
     # Create leaderboard
@@ -124,8 +124,8 @@ async def dash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user = await context.bot.get_chat_member(group_id, int(uid))
             name = user.user.full_name
         except:
-            name = f"مستخدم {uid}"
-        leaderboard.append(f"{idx+1}. {name} - {pts} pts")
+            name = f"يوزر {uid}"
+        leaderboard.append(f"{idx+1}. {name} - {pts} نقطة")
     
     # Add emoji indicators for top 3
     if len(leaderboard) > 0:
@@ -136,15 +136,15 @@ async def dash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         leaderboard[2] = "🥉 " + leaderboard[2]
     
     await update.message.reply_text(
-        f"📊 جدول المتصدرين الحالي 📊\n"
-        f"المجموعة: {update.effective_chat.title}\n\n" + "\n".join(leaderboard)
+        f"📊 قايمة المتصدرين دلوقتي 📊\n"
+        f"الجروب: {update.effective_chat.title}\n\n" + "\n".join(leaderboard)
     )
 
 # === /reset command - reset all points (admin/owner only) ===
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if command is in group
     if update.effective_chat.type == 'private':
-        await update.message.reply_text("⛔ هذا الأمر يمكن استخدامه في المجموعات فقط!")
+        await update.message.reply_text("⛔ الأمر ده بيشتغل في الجروبات بس!")
         return
     
     user_id = update.message.from_user.id
@@ -152,13 +152,13 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Check if user is admin or owner
     if not await is_admin_or_owner(context, group_id, user_id):
-        await update.message.reply_text("⛔ تحتاج إلى أن تكون مشرفاً أو مالك المجموعة لإعادة تعيين النقاط!")
+        await update.message.reply_text("⛔ لازم تكون أدمن أو صاحب الجروب علشان تمسح النقط!")
         return
         
     # Reset points for this group
     save_group_points(group_id, {})
     
-    await update.message.reply_text("✅ تم إعادة تعيين جدول المتصدرين! تم مسح جميع النقاط لهذه المجموعة.")
+    await update.message.reply_text("✅ تم مسح قايمة المتصدرين! كل النقط اتمسحت من الجروب ده.")
     print(f"♻️ Points reset for group {group_id} by user {user_id}")
 
 # === Save group owner and admin list ===
@@ -198,18 +198,18 @@ async def save_group_and_admins(update: Update, context: ContextTypes.DEFAULT_TY
             print(f"✅ Saved group {group_id}: owner={owner_id}, {len(admin_ids)} admins")
             await context.bot.send_message(
                 chat.id,
-                f"✅ Bot initialized for group: {chat.title}\n\n"
-                "Commands:\n"
-                "/dash - Show current leaderboard\n"
-                "/reset - Reset points (admins/owner only)\n\n"
-                f"Keywords: {', '.join(KEYWORDS)}\n"
-                f"Subtract keyword: {', '.join(SUBTRACT_KEYWORDS)}"
+                f"✅ البوت جاهز في الجروب: {chat.title}\n\n"
+                "الأوامر:\n"
+                "/dash - عرض قايمة المتصدرين دلوقتي\n"
+                "/reset - مسح النقط (الأدمنز/صاحب الجروب بس)\n\n"
+                f"الكلمات المفتاحية: {', '.join(KEYWORDS)}\n"
+                f"كلمة النقص: {', '.join(SUBTRACT_KEYWORDS)}"
             )
         except Exception as e:
             print(f"❌ Error saving group data for {group_id}: {e}")
             await context.bot.send_message(
                 chat.id,
-                "⚠️ لا يمكن تهيئة البوت بالكامل. يرجى التأكد من أن لدي صلاحيات المشرف."
+                "⚠️ مقدرش أشتغل كامل. خلي ليا صلاحيات أدمن في الجروب."
             )
 
 # === Handle admin/owner replies ===
@@ -231,12 +231,12 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Prevent self-awarding
     if user_id == replied_user.id:
-        await update.message.reply_text("⛔ لا يمكنك منح نقاط لنفسك!")
+        await update.message.reply_text("⛔ مينفعش تدي نفسك نقط!")
         return
     
     # Prevent awarding points to bots
     if replied_user.is_bot:
-        await update.message.reply_text("⛔ لا يمكن منح نقاط للبوتات!")
+        await update.message.reply_text("⛔ مينفعش إدي نقط للبوتات!")
         return
 
     # Check keyword for adding points
@@ -274,7 +274,7 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await update.message.reply_text(
-                f"⚠️ {replied_user.full_name} لديه 0 نقطة بالفعل! لا يمكن خصم المزيد."
+                f"⚠️ {replied_user.full_name} معوش نقط أصلاً! مينفعش نشيل أكتر من كده."
             )
 
 # === Leaderboard function ===
@@ -283,7 +283,7 @@ async def send_leaderboard(context: CallbackContext):
     points = load_group_points(group_id)
     
     if not points:
-        await context.bot.send_message(group_id, "📭 لم يتم منح نقاط هذا الأسبوع!")
+        await context.bot.send_message(group_id, "📭 مفيش حد خد نقط الأسبوع ده!")
         return
 
     try:
@@ -291,7 +291,7 @@ async def send_leaderboard(context: CallbackContext):
         chat = await context.bot.get_chat(group_id)
         group_name = chat.title
     except:
-        group_name = f"مجموعة {group_id}"
+        group_name = f"جروب {group_id}"
 
     sorted_points = sorted(points.items(), key=lambda x: x[1], reverse=True)
     leaderboard = []
@@ -301,8 +301,8 @@ async def send_leaderboard(context: CallbackContext):
             user = await context.bot.get_chat_member(group_id, int(uid))
             name = user.user.full_name
         except:
-            name = f"مستخدم {uid}"
-        leaderboard.append(f"{idx+1}. {name} - {pts} pts")
+            name = f"يوزر {uid}"
+        leaderboard.append(f"{idx+1}. {name} - {pts} نقطة")
     
     # Add emoji indicators for top 3
     if len(leaderboard) > 0:
@@ -314,8 +314,8 @@ async def send_leaderboard(context: CallbackContext):
     
     await context.bot.send_message(
         chat_id=group_id,
-        text=f"🏆 جدول المتصدرين الأسبوعي 🏆\n"
-             f"المجموعة: {group_name}\n\n" + "\n".join(leaderboard)
+        text=f"🏆 قايمة المتصدرين الأسبوعية 🏆\n"
+             f"الجروب: {group_name}\n\n" + "\n".join(leaderboard)
     )
     
     # Reset points for this group
@@ -378,7 +378,7 @@ def main():
     load_existing_groups(application)
     
     # Start the bot
-    print("🤖 بدء تشغيل البوت متعدد المجموعات...")
+    print("🤖 البوت شغال دلوقتي...")
     application.run_polling()
 
 if __name__ == '__main__':
