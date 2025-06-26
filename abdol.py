@@ -18,7 +18,7 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", os.getenv("TELEGRAM_TOKEN", "YOUR_BOT_TO
 DATA_DIR = os.getenv("DATA_DIR", ".")
 GROUPS_DATA_DIR = Path(DATA_DIR) / 'groups_data'
 KEYWORDS = ['ok', 'tamm', 'تم', 'ضن']
-SUBTRACT_KEYWORDS = ['حذف']
+SUBTRACT_KEYWORDS = ['حذف', 'ماينص']
 
 # Railway port configuration
 PORT = int(os.getenv("PORT", 8000))
@@ -96,7 +96,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "3. هنشر قايمة المتصدرين كل يوم سبت\n\n"
         "الأوامر (الجروبات بس):\n"
         "/dash - عرض قايمة المتصدرين دلوقتي\n"
-        "/reset - مسح النقط كلها (الأدمنز/صاحب الجروب بس)\n\n"
+        "/reset - مسح النقط كلها (الأدمنز/صاحب الجروب بس يقدر يعمل كده)\n\n"
         f"زيادة نقط: {', '.join(KEYWORDS)}\n"
         f"نقص نقط: {', '.join(SUBTRACT_KEYWORDS)}"
     )
@@ -112,7 +112,7 @@ async def dash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     points = load_group_points(group_id)
     
     if not points:
-        await update.message.reply_text("📊 مفيش نقط لسه! ابدأ إدي نقط بالرد على الرسايل بالكلمات المحددة.")
+        await update.message.reply_text("📊  مفيش نقط لسه! ابدأ ادي نقط بالرد على الرسايل بالكلمات المحددة.")
         return
 
     # Create leaderboard
@@ -201,7 +201,7 @@ async def save_group_and_admins(update: Update, context: ContextTypes.DEFAULT_TY
                 f"✅ البوت جاهز في الجروب: {chat.title}\n\n"
                 "الأوامر:\n"
                 "/dash - عرض قايمة المتصدرين دلوقتي\n"
-                "/reset - مسح النقط (الأدمنز/صاحب الجروب بس)\n\n"
+                "/reset - مسح النقط (الأدمنز/صاحب الجروب بس يقدروا يستخدموها)\n\n"
                 f"الكلمات المفتاحية: {', '.join(KEYWORDS)}\n"
                 f"كلمة النقص: {', '.join(SUBTRACT_KEYWORDS)}"
             )
@@ -236,7 +236,7 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Prevent awarding points to bots
     if replied_user.is_bot:
-        await update.message.reply_text("⛔ مينفعش إدي نقط للبوتات!")
+        await update.message.reply_text("⛔ مينفعش اضيف نقط للبوتات!")
         return
 
     # Check keyword for adding points
