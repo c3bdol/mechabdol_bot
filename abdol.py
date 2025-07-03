@@ -103,7 +103,6 @@ def parse_test_scores(message_text: str) -> list:
             continue
             
         # Pattern to match: @username score or username score
-        # Also handles mentions like @user_name 5 or user_name 5
         pattern = r'(@?\w+)\s+(\d+(?:\.\d+)?)'
         match = re.search(pattern, line)
         
