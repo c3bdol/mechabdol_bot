@@ -40,6 +40,53 @@ def get_group_admins_file(group_id: int) -> Path:
 def get_group_owner_file(group_id: int) -> Path:
     return GROUPS_DATA_DIR / f'owner_{group_id}.txt'
 
+def get_group_users_file(group_id: int) -> Path:
+    return GROUPS_DATA_DIR / f'users_{group_id}.json'
+
+# === Load/Save username mappings ===
+def load_group_users(group_id: int) -> dict:
+    """Load username -> user_id mappings for this group"""
+    users_file = get_group_users_file(group_id)
+    if users_file.exists():
+        try:
+            with open(users_file, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            return {}
+    return {}
+
+def save_group_users(group_id: int, users: dict):
+    """Save username -> user_id mappings for this group"""
+    users_file = get_group_users_file(group_id)
+    with open(users_file, 'w') as f:
+        json.dump(users, f)
+
+def update_user_mapping(group_id: int, user_id: int, username: str = None, full_name: str = None):
+    """Update user mapping with username and full name"""
+    users = load_group_users(group_id)
+    user_id_str = str(user_id)
+    
+    if user_id_str not in users:
+        users[user_id_str] = {}
+    
+    if username:
+        users[user_id_str]['username'] = username.lower()
+    if full_name:
+        users[user_id_str]['full_name'] = full_name
+    
+    save_group_users(group_id, users)
+
+def find_user_by_username(group_id: int, username: str) -> int:
+    """Find user ID by username from stored mappings"""
+    users = load_group_users(group_id)
+    username_lower = username.lower()
+    
+    for user_id_str, user_data in users.items():
+        if user_data.get('username', '').lower() == username_lower:
+            return int(user_id_str)
+    
+    return None
+
 # === Load group points ===
 def load_group_points(group_id: int) -> dict:
     points_file = get_group_points_file(group_id)
@@ -83,10 +130,6 @@ async def is_admin_or_owner(context: ContextTypes.DEFAULT_TYPE, group_id: int, u
     
     return False
 
-# === Check if command is allowed in private chat ===
-def is_private_chat_allowed(command: str) -> bool:
-    return command == 'start'
-
 # === Parse test scores from message ===
 def parse_test_scores(message_text: str) -> list:
     """
@@ -103,7 +146,6 @@ def parse_test_scores(message_text: str) -> list:
             continue
             
         # Pattern to match: @username score or username score
-        # Also handles mentions like @user_name 5 or user_name 5
         pattern = r'(@?\w+)\s+(\d+(?:\.\d+)?)'
         match = re.search(pattern, line)
         
@@ -117,19 +159,27 @@ def parse_test_scores(message_text: str) -> list:
     
     return scores
 
-# === Get user ID from username ===
+# === Enhanced user ID resolution ===
 async def get_user_id_from_username(context: ContextTypes.DEFAULT_TYPE, group_id: int, username: str) -> int:
     """
-    Try to get user ID from username by checking recent messages or mentions.
-    This is a simplified approach - in practice, you might want to maintain a username->ID mapping.
+    Try multiple methods to get user ID from username
     """
+    # Method 1: Check stored mappings first
+    user_id = find_user_by_username(group_id, username)
+    if user_id:
+        return user_id
+    
+    # Method 2: Try direct API call
     try:
-        # Try to get chat member by username (this works for some cases)
         member = await context.bot.get_chat_member(group_id, f"@{username}")
-        return member.user.id
-    except:
-        # If that fails, we'll need to return None and handle it in the calling function
-        return None
+        if member and member.user:
+            # Store this mapping for future use
+            update_user_mapping(group_id, member.user.id, username, member.user.full_name)
+            return member.user.id
+    except Exception as e:
+        print(f"⚠️ Could not get user @{username} via API: {e}")
+    
+    return None
 
 # === Handle test scores message ===
 async def handle_test_scores(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -157,27 +207,21 @@ async def handle_test_scores(update: Update, context: ContextTypes.DEFAULT_TYPE)
     failed_updates = []
     
     for username, score in scores:
-        # First, try to find the user ID from entities (mentions)
         user_id_found = None
         
-        # Check if there are any mentions in the message
+        # First, check if there are any text mentions in the message
         if update.message.entities:
             for entity in update.message.entities:
-                if entity.type == 'mention':
-                    mention_text = message_text[entity.offset:entity.offset + entity.length]
-                    if mention_text.lower() == f"@{username.lower()}":
-                        # This is a mention, but we still need to get the user ID
-                        # Try to get user ID from username
-                        user_id_found = await get_user_id_from_username(context, group_id, username)
-                        break
-                elif entity.type == 'text_mention':
+                if entity.type == 'text_mention':
                     # Direct mention with user object
                     mention_text = message_text[entity.offset:entity.offset + entity.length]
                     if mention_text.lower() == f"@{username.lower()}" or mention_text.lower() == username.lower():
                         user_id_found = entity.user.id
+                        # Store this mapping
+                        update_user_mapping(group_id, entity.user.id, username, entity.user.full_name)
                         break
         
-        # If we couldn't find user ID from mentions, try to get it from username
+        # If not found in text mentions, try username resolution
         if user_id_found is None:
             user_id_found = await get_user_id_from_username(context, group_id, username)
         
@@ -185,12 +229,10 @@ async def handle_test_scores(update: Update, context: ContextTypes.DEFAULT_TYPE)
             user_id_str = str(user_id_found)
             points[user_id_str] = points.get(user_id_str, 0) + score
             
-            # Get user's name for the response
-            try:
-                user = await context.bot.get_chat_member(group_id, user_id_found)
-                display_name = user.user.full_name
-            except:
-                display_name = username
+            # Get user's display name
+            users = load_group_users(group_id)
+            user_data = users.get(user_id_str, {})
+            display_name = user_data.get('full_name', username)
             
             successful_updates.append(f"✅ {display_name}: +{score} نقطة (المجموع: {points[user_id_str]})")
         else:
@@ -200,7 +242,7 @@ async def handle_test_scores(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if successful_updates:
         save_group_points(group_id, points)
     
-    # Send response if there were any score updates attempted
+    # Send response with suggestions for failed updates
     if successful_updates or failed_updates:
         response_lines = []
         
@@ -213,8 +255,31 @@ async def handle_test_scores(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 response_lines.append("")
             response_lines.append("⚠️ لم يتم العثور على:")
             response_lines.extend(failed_updates)
+            response_lines.append("")
+            response_lines.append("💡 نصائح لحل المشكلة:")
+            response_lines.append("• تأكد من كتابة اليوزرنيم صح")
+            response_lines.append("• استخدم منشن مباشر (@username)")
+            response_lines.append("• تأكد ان المستخدم متفاعل في الجروب")
         
         await update.message.reply_text("\n".join(response_lines))
+
+# === Track all messages to build user mappings ===
+async def track_user_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Track user activity to build username mappings"""
+    if update.effective_chat.type == 'private':
+        return
+    
+    if update.message and update.message.from_user:
+        user = update.message.from_user
+        group_id = update.effective_chat.id
+        
+        # Update user mapping
+        update_user_mapping(
+            group_id=group_id,
+            user_id=user.id,
+            username=user.username,
+            full_name=user.full_name
+        )
 
 # === /start command ===
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -227,15 +292,70 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "4. هنشر قايمة المتصدرين كل يوم سبت\n\n"
         "الأوامر (الجروبات بس):\n"
         "/dash - عرض قايمة المتصدرين دلوقتي\n"
-        "/reset - مسح النقط كلها (الأدمنز/صاحب الجروب بس)\n\n"
+        "/reset - مسح النقط كلها (الأدمنز/صاحب الجروب بس)\n"
+        "/users - عرض قائمة الأعضاء المحفوظين\n\n"
         f"زيادة نقط: {', '.join(KEYWORDS)}\n"
         f"نقص نقط: {', '.join(SUBTRACT_KEYWORDS)}\n\n"
         "📝 إضافة نقاط امتحانات:\n"
         "اكتب رسالة بالشكل ده:\n"
         "@username1 85\n"
         "@username2 92\n"
-        "username3 78"
+        "username3 78\n\n"
+        "💡 نصائح لإضافة النقاط:\n"
+        "• استخدم منشن مباشر (@username)\n"
+        "• تأكد ان الأعضاء متفاعلين في الجروب\n"
+        "• البوت يحفظ معلومات الأعضاء تلقائياً"
     )
+
+# === /users command - show stored users ===
+async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Check if command is in group
+    if update.effective_chat.type == 'private':
+        await update.message.reply_text("⛔ الأمر ده بيشتغل في الجروبات بس!")
+        return
+    
+    # Check if user is admin or owner
+    user_id = update.message.from_user.id
+    group_id = update.effective_chat.id
+    
+    if not await is_admin_or_owner(context, group_id, user_id):
+        await update.message.reply_text("⛔ لازم تكون أدمن أو صاحب الجروب علشان تشوف قائمة الأعضاء!")
+        return
+    
+    users = load_group_users(group_id)
+    
+    if not users:
+        await update.message.reply_text("📭 مفيش أعضاء محفوظين لسه! الأعضاء هيتحفظوا لما يكتبوا رسايل.")
+        return
+    
+    user_list = []
+    for user_id_str, user_data in users.items():
+        username = user_data.get('username', 'لا يوجد')
+        full_name = user_data.get('full_name', 'غير محدد')
+        user_list.append(f"• {full_name} (@{username})")
+    
+    # Split into chunks if too long
+    message = f"👥 الأعضاء المحفوظين ({len(users)} عضو):\n\n" + "\n".join(user_list)
+    
+    if len(message) > 4000:
+        # Split message
+        chunks = []
+        current_chunk = f"👥 الأعضاء المحفوظين ({len(users)} عضو):\n\n"
+        
+        for user_line in user_list:
+            if len(current_chunk + user_line + "\n") > 4000:
+                chunks.append(current_chunk)
+                current_chunk = user_line + "\n"
+            else:
+                current_chunk += user_line + "\n"
+        
+        if current_chunk:
+            chunks.append(current_chunk)
+        
+        for chunk in chunks:
+            await update.message.reply_text(chunk)
+    else:
+        await update.message.reply_text(message)
 
 # === /dash command - show current leaderboard ===
 async def dash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -251,16 +371,14 @@ async def dash_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📊 مفيش نقط لسه! ابدأ إدي نقط بالرد على الرسايل بالكلمات المحددة.")
         return
 
-    # Create leaderboard
+    # Create leaderboard using stored user data
+    users = load_group_users(group_id)
     sorted_points = sorted(points.items(), key=lambda x: x[1], reverse=True)
     leaderboard = []
     
     for idx, (uid, pts) in enumerate(sorted_points):
-        try:
-            user = await context.bot.get_chat_member(group_id, int(uid))
-            name = user.user.full_name
-        except:
-            name = f"يوزر {uid}"
+        user_data = users.get(uid, {})
+        name = user_data.get('full_name', f"يوزر {uid}")
         leaderboard.append(f"{idx+1}. {name} - {pts} نقطة")
     
     # Add emoji indicators for top 3
@@ -314,6 +432,14 @@ async def save_group_and_admins(update: Update, context: ContextTypes.DEFAULT_TY
                     owner_id = admin.user.id
                 elif admin.status == 'administrator':
                     admin_ids.append(admin.user.id)
+                
+                # Store admin/owner user mapping
+                update_user_mapping(
+                    group_id=group_id,
+                    user_id=admin.user.id,
+                    username=admin.user.username,
+                    full_name=admin.user.full_name
+                )
             
             # Save owner ID
             if owner_id:
@@ -337,14 +463,16 @@ async def save_group_and_admins(update: Update, context: ContextTypes.DEFAULT_TY
                 f"✅ البوت جاهز في الجروب: {chat.title}\n\n"
                 "الأوامر:\n"
                 "/dash - عرض قايمة المتصدرين دلوقتي\n"
-                "/reset - مسح النقط (الأدمنز/صاحب الجروب بس)\n\n"
+                "/reset - مسح النقط (الأدمنز/صاحب الجروب بس)\n"
+                "/users - عرض قائمة الأعضاء المحفوظين\n\n"
                 f"الكلمات المفتاحية: {', '.join(KEYWORDS)}\n"
                 f"كلمة النقص: {', '.join(SUBTRACT_KEYWORDS)}\n\n"
                 "📝 إضافة نقاط امتحانات:\n"
                 "اكتب رسالة بالشكل ده:\n"
                 "@username1 85\n"
                 "@username2 92\n"
-                "username3 78"
+                "username3 78\n\n"
+                "💡 البوت هيحفظ معلومات الأعضاء تلقائياً عشان يقدر يديهم نقط بسهولة!"
             )
         except Exception as e:
             print(f"❌ Error saving group data for {group_id}: {e}")
@@ -365,6 +493,9 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     group_id = update.effective_chat.id
     replied_user = update.message.reply_to_message.from_user
+
+    # Track user activity
+    await track_user_activity(update, context)
 
     # Check admin/owner status
     if not await is_admin_or_owner(context, group_id, user_id):
@@ -389,6 +520,9 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text in KEYWORDS:
         replied_user_id = str(replied_user.id)
         
+        # Update user mapping
+        update_user_mapping(group_id, replied_user.id, replied_user.username, replied_user.full_name)
+        
         # Load current points for this group
         points = load_group_points(group_id)
         points[replied_user_id] = points.get(replied_user_id, 0) + 1
@@ -405,6 +539,9 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check keyword for subtracting points
     elif text in SUBTRACT_KEYWORDS:
         replied_user_id = str(replied_user.id)
+        
+        # Update user mapping
+        update_user_mapping(group_id, replied_user.id, replied_user.username, replied_user.full_name)
         
         # Load current points for this group
         points = load_group_points(group_id)
@@ -431,6 +568,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Only work in groups
     if update.effective_chat.type == 'private':
         return
+    
+    # Track user activity
+    await track_user_activity(update, context)
     
     # Check if this might be a test scores message
     message_text = update.message.text
@@ -463,15 +603,14 @@ async def send_leaderboard(context: CallbackContext):
     except:
         group_name = f"جروب {group_id}"
 
+    # Use stored user data for leaderboard
+    users = load_group_users(group_id)
     sorted_points = sorted(points.items(), key=lambda x: x[1], reverse=True)
     leaderboard = []
     
     for idx, (uid, pts) in enumerate(sorted_points):
-        try:
-            user = await context.bot.get_chat_member(group_id, int(uid))
-            name = user.user.full_name
-        except:
-            name = f"يوزر {uid}"
+        user_data = users.get(uid, {})
+        name = user_data.get('full_name', f"يوزر {uid}")
         leaderboard.append(f"{idx+1}. {name} - {pts} نقطة")
     
     # Add emoji indicators for top 3
@@ -520,38 +659,4 @@ def load_existing_groups(application: Application):
     
     # Find all group data files
     group_ids = set()
-    for file in GROUPS_DATA_DIR.iterdir():
-        if file.name.startswith('points_') and file.name.endswith('.json'):
-            try:
-                group_id = int(file.name.replace('points_', '').replace('.json', ''))
-                group_ids.add(group_id)
-            except ValueError:
-                continue
-    
-    # Schedule leaderboards for existing groups
-    for group_id in group_ids:
-        schedule_leaderboard(application, group_id)
-        print(f"🔍 Found and scheduled existing group: {group_id}")
-
-# === Main bot function ===
-def main():
-    application = Application.builder().token(TOKEN).build()
-    
-    # Add handlers
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("dash", dash_command))
-    application.add_handler(CommandHandler("reset", reset_command))
-    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, save_group_and_admins))
-    application.add_handler(MessageHandler(filters.TEXT & filters.REPLY, handle_reply))
-    # Add handler for multi-line messages (test scores) with lower priority
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.REPLY & ~filters.COMMAND, handle_message))
-    
-    # Load existing groups and schedule jobs
-    load_existing_groups(application)
-    
-    # Start the bot
-    print("🤖 البوت شغال دلوقتي...")
-    application.run_polling()
-
-if __name__ == '__main__':
-    main()
+    for file in GROUPS_DATA_DIR.iterdir
