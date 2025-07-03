@@ -11,6 +11,7 @@ import datetime
 import json
 import os
 import pytz
+import re
 from pathlib import Path
 
 # === Config ===
@@ -86,6 +87,135 @@ async def is_admin_or_owner(context: ContextTypes.DEFAULT_TYPE, group_id: int, u
 def is_private_chat_allowed(command: str) -> bool:
     return command == 'start'
 
+# === Parse test scores from message ===
+def parse_test_scores(message_text: str) -> list:
+    """
+    Parse test scores from a multi-line message.
+    Expected format: @username score or username score
+    Returns list of tuples (username, score)
+    """
+    lines = message_text.strip().split('\n')
+    scores = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Pattern to match: @username score or username score
+        # Also handles mentions like @user_name 5 or user_name 5
+        pattern = r'(@?\w+)\s+(\d+(?:\.\d+)?)'
+        match = re.search(pattern, line)
+        
+        if match:
+            username = match.group(1).lstrip('@')  # Remove @ if present
+            try:
+                score = float(match.group(2))
+                scores.append((username, score))
+            except ValueError:
+                continue
+    
+    return scores
+
+# === Get user ID from username ===
+async def get_user_id_from_username(context: ContextTypes.DEFAULT_TYPE, group_id: int, username: str) -> int:
+    """
+    Try to get user ID from username by checking recent messages or mentions.
+    This is a simplified approach - in practice, you might want to maintain a username->ID mapping.
+    """
+    try:
+        # Try to get chat member by username (this works for some cases)
+        member = await context.bot.get_chat_member(group_id, f"@{username}")
+        return member.user.id
+    except:
+        # If that fails, we'll need to return None and handle it in the calling function
+        return None
+
+# === Handle test scores message ===
+async def handle_test_scores(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle multi-line test scores message from admin.
+    Format: Each line should contain a mention/username and a score.
+    """
+    message_text = update.message.text
+    if not message_text:
+        return
+    
+    # Parse test scores from the message
+    scores = parse_test_scores(message_text)
+    
+    if not scores:
+        return  # No valid scores found, don't respond
+    
+    group_id = update.effective_chat.id
+    
+    # Load current points for this group
+    points = load_group_points(group_id)
+    
+    # Process each score
+    successful_updates = []
+    failed_updates = []
+    
+    for username, score in scores:
+        # First, try to find the user ID from entities (mentions)
+        user_id_found = None
+        
+        # Check if there are any mentions in the message
+        if update.message.entities:
+            for entity in update.message.entities:
+                if entity.type == 'mention':
+                    mention_text = message_text[entity.offset:entity.offset + entity.length]
+                    if mention_text.lower() == f"@{username.lower()}":
+                        # This is a mention, but we still need to get the user ID
+                        # Try to get user ID from username
+                        user_id_found = await get_user_id_from_username(context, group_id, username)
+                        break
+                elif entity.type == 'text_mention':
+                    # Direct mention with user object
+                    mention_text = message_text[entity.offset:entity.offset + entity.length]
+                    if mention_text.lower() == f"@{username.lower()}" or mention_text.lower() == username.lower():
+                        user_id_found = entity.user.id
+                        break
+        
+        # If we couldn't find user ID from mentions, try to get it from username
+        if user_id_found is None:
+            user_id_found = await get_user_id_from_username(context, group_id, username)
+        
+        if user_id_found:
+            user_id_str = str(user_id_found)
+            points[user_id_str] = points.get(user_id_str, 0) + score
+            
+            # Get user's name for the response
+            try:
+                user = await context.bot.get_chat_member(group_id, user_id_found)
+                display_name = user.user.full_name
+            except:
+                display_name = username
+            
+            successful_updates.append(f"✅ {display_name}: +{score} نقطة (المجموع: {points[user_id_str]})")
+        else:
+            failed_updates.append(f"❌ {username}: لم يتم العثور على المستخدم")
+    
+    # Save updated points if there were successful updates
+    if successful_updates:
+        save_group_points(group_id, points)
+    
+    # Send response if there were any score updates attempted
+    if successful_updates or failed_updates:
+        response_lines = []
+        
+        if successful_updates:
+            response_lines.append("📊 تم تحديث النقاط:")
+            response_lines.extend(successful_updates)
+        
+        if failed_updates:
+            if successful_updates:
+                response_lines.append("")
+            response_lines.append("⚠️ لم يتم العثور على:")
+            response_lines.extend(failed_updates)
+        
+        await update.message.reply_text("\n".join(response_lines))
+
 # === /start command ===
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -93,12 +223,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "إزاي أشتغل:\n"
         "1. ضيفني للجروب\n"
         "2. الأدمنز وصاحب الجروب يقدروا يردوا على الرسايل بكلمات معينة علشان يدوا نقط أو يشيلوها\n"
-        "3. هنشر قايمة المتصدرين كل يوم سبت\n\n"
+        "3. يقدروا يضيفوا نقط امتحانات بكتابة رسالة فيها عدة أسطر، كل سطر فيه منشن واسكور\n"
+        "4. هنشر قايمة المتصدرين كل يوم سبت\n\n"
         "الأوامر (الجروبات بس):\n"
         "/dash - عرض قايمة المتصدرين دلوقتي\n"
         "/reset - مسح النقط كلها (الأدمنز/صاحب الجروب بس)\n\n"
         f"زيادة نقط: {', '.join(KEYWORDS)}\n"
-        f"نقص نقط: {', '.join(SUBTRACT_KEYWORDS)}"
+        f"نقص نقط: {', '.join(SUBTRACT_KEYWORDS)}\n\n"
+        "📝 إضافة نقاط امتحانات:\n"
+        "اكتب رسالة بالشكل ده:\n"
+        "@username1 85\n"
+        "@username2 92\n"
+        "username3 78"
     )
 
 # === /dash command - show current leaderboard ===
@@ -203,7 +339,12 @@ async def save_group_and_admins(update: Update, context: ContextTypes.DEFAULT_TY
                 "/dash - عرض قايمة المتصدرين دلوقتي\n"
                 "/reset - مسح النقط (الأدمنز/صاحب الجروب بس)\n\n"
                 f"الكلمات المفتاحية: {', '.join(KEYWORDS)}\n"
-                f"كلمة النقص: {', '.join(SUBTRACT_KEYWORDS)}"
+                f"كلمة النقص: {', '.join(SUBTRACT_KEYWORDS)}\n\n"
+                "📝 إضافة نقاط امتحانات:\n"
+                "اكتب رسالة بالشكل ده:\n"
+                "@username1 85\n"
+                "@username2 92\n"
+                "username3 78"
             )
         except Exception as e:
             print(f"❌ Error saving group data for {group_id}: {e}")
@@ -280,6 +421,31 @@ async def handle_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"⚠️ {replied_user.full_name} معوش نقط أصلاً! مينفعش نشيل أكتر من كده."
             )
+
+# === Handle general messages (for test scores) ===
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle non-reply messages that might contain test scores."""
+    if not update.message or update.message.reply_to_message:
+        return  # Skip if it's a reply message (handled by handle_reply)
+    
+    # Only work in groups
+    if update.effective_chat.type == 'private':
+        return
+    
+    # Check if this might be a test scores message
+    message_text = update.message.text
+    if not message_text or '\n' not in message_text:
+        return  # Not a multi-line message
+    
+    # Only process if user is admin/owner (quick check to avoid unnecessary processing)
+    user_id = update.message.from_user.id
+    group_id = update.effective_chat.id
+    
+    if not await is_admin_or_owner(context, group_id, user_id):
+        return
+    
+    # Handle potential test scores
+    await handle_test_scores(update, context)
 
 # === Leaderboard function ===
 async def send_leaderboard(context: CallbackContext):
@@ -377,6 +543,8 @@ def main():
     application.add_handler(CommandHandler("reset", reset_command))
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, save_group_and_admins))
     application.add_handler(MessageHandler(filters.TEXT & filters.REPLY, handle_reply))
+    # Add handler for multi-line messages (test scores) with lower priority
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.REPLY & ~filters.COMMAND, handle_message))
     
     # Load existing groups and schedule jobs
     load_existing_groups(application)
